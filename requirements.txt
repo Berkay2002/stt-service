@@ -1,0 +1,13 @@
+# CPU
+faster-whisper==1.0.0
+whisper_live==0.5.1
+torch==2.2.0
+torchaudio==2.2.0
+ffmpeg-python==0.2.0
+
+# GPU
+#torch==2.2.0+cu121
+#torchaudio==2.2.0+cu121
+#faster-whisper==1.0.0
+#whisper_live==0.5.1
+#ffmpeg-python==0.2.0
