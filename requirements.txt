@@ -1,13 +1,44 @@
-# CPU
-faster-whisper==1.0.0
-whisper_live==0.5.1
-torch==2.2.0
-torchaudio==2.2.0
-ffmpeg-python==0.2.0
+# CPU Setup (Commented out for GPU usage)
+#--extra-index-url https://download.pytorch.org/whl/cpu
+#faster-whisper==1.1.0
+#whisper-live
+#torch==2.2.0+cpu
+#torchaudio==2.2.0+cpu
+#ffmpeg-python
+#soundfile
+#numpy
+#webrtcvad  # For Voice Activity Detection in real-time transcription
+#pyaudio
 
-# GPU
-#torch==2.2.0+cu121
-#torchaudio==2.2.0+cu121
-#faster-whisper==1.0.0
-#whisper_live==0.5.1
-#ffmpeg-python==0.2.0
+# Optional: For better VAD performance
+# silero-vad  # Alternative VAD - uncomment if you want to use it instead of webrtcvad
+
+# GPU Setup (Enabled for CUDA support)
+--extra-index-url https://download.pytorch.org/whl/cu121
+faster-whisper==1.1.0
+whisper-live
+torch==2.2.0+cu121
+torchaudio==2.2.0+cu121
+ffmpeg-python
+soundfile
+numpy
+webrtcvad
+pyaudio
+nvidia-cudnn-cu12
+
+# Monitoring and health checks
+flask
+psutil
+requests
+
+# Installation notes:
+# 1. For webrtcvad, you may need to install build tools on some systems:
+#    - Windows: Install Microsoft C++ Build Tools
+#    - macOS: Install Xcode command line tools
+#
+# 2. If webrtcvad installation fails, the system will fall back to 
+#    volume-based voice activity detection
+#
+# 3. For PyAudio installation issues:
+#    - Windows: pip install pipwin && pipwin install pyaudio
+#    - macOS: brew install portaudio && pip install pyaudio

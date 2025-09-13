@@ -1,0 +1,34 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Log files
+logs/
+*.log
+
+# Model files
+models/*.bin
+models/*.pt
+
+# Audio files (except test samples)
+*.wav
+!assets/harvard.wav
+
+# Environment files
+.env
+.venv
+env/
+venv/
+
+# IDE files
+.vscode/
+.idea/
+
+# Test results
+*.json
+test_results/
+
+# OS files
+.DS_Store
+Thumbs.db

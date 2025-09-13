@@ -1,0 +1,29 @@
+# Use a base Python image with CUDA support
+FROM nvidia/cuda:12.1-cudnn9-runtime-ubuntu22.04
+
+# Install system dependencies, including portaudio needed for PyAudio
+RUN apt-get update && apt-get install -y ffmpeg build-essential python3-pip portaudio19-dev
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Environment variables
+ENV MODEL_PATH=/app/models
+ENV WHISPER_BACKEND=faster-whisper
+ENV CUDA_VISIBLE_DEVICES=0
+
+# Ensure cuDNN libraries are in LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+
+# Expose service port
+EXPOSE 9090
+
+# Launch Whisper Live on GPU
+CMD ["python3", "run_server.py", "--port", "9090", "--backend", "faster_whisper", "--model", "small"]
