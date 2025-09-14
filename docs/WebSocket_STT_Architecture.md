@@ -2,63 +2,63 @@
 
 ## Fasttalk System Integration
 
-The WebSocket STT Server is a critical component of the **Fasttalk** conversational AI system—a comprehensive real-time voice interaction platform that orchestrates Speech-to-Text (STT), Large Language Models (LLM), and Text-to-Speech (TTS) services to deliver seamless conversational AI experiences.
+The WebSocket STT Server is a component of the **Fasttalk** conversational AI system—a comprehensive real-time voice interaction platform that orchestrates Speech-to-Text (STT), Large Language Models (LLM), and Text-to-Speech (TTS) services to deliver seamless conversational AI experiences.
 
 ### Fasttalk System Overview
 
 Fasttalk is designed as a modular, GPU-accelerated conversational AI platform that enables real-time voice interactions with advanced interrupt handling (barge-in) capabilities. The STT service documented here serves as the entry point for audio processing in the complete conversational pipeline.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────────────────┐
 │                          FASTTALK SYSTEM ARCHITECTURE                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐        │
-│  │   Web Browser   │◄───┤   Mobile App    │────┤  Audio Player   │        │
-│  │  (Microphone)   │    │  (Microphone)   │    │  (TTS Output)   │        │
-│  └─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘        │
-│            │                      │                      │                │
-│            └──────────────────────┼──────────────────────┘                │
-│                                   │                                       │
-│  ┌─────────────────────────────────▼─────────────────────────────────────┐  │
-│  │                    CORE BACKEND SERVICE                               │  │
-│  │                                                                       │  │
-│  │  ┌──────────────────┐  ┌─────────────────┐  ┌───────────────────────┐│  │
-│  │  │   WebSocket      │  │ Core Interaction│  │  Configuration        ││  │
-│  │  │  Communication  │  │     Logic       │  │   Management API      ││  │
-│  │  │   Interface     │  │                 │  │                       ││  │
-│  │  └─────────┬────────┘  └─────────┬───────┘  └───────────────────────┘│  │
-│  │            │                     │                                   │  │
-│  │            │     ┌───────────────▼──────────────┐                   │  │
-│  │            │     │   BARGE-IN INTERRUPT CONTROL │                   │  │
-│  │            │     │   (User Interrupt Handling)  │                   │  │
-│  │            │     └─────────────┬──────────────────┘                 │  │
-│  └────────────┼─────────────────────┼─────────────────────────────────────┘  │
-│               │                     │                                        │
-│  ┌────────────▼─────────────────────▼────────────────────────────────────┐  │
-│  │                AI MODELS SERVICE PIPELINE                             │  │
-│  │                  (GPU Docker Containers)                              │  │
-│  │                                                                       │  │
-│  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────────┐   │  │
-│  │  │ STT MODULE  │───▶│ LLM MODULE  │───▶│      TTS MODULE         │   │  │
-│  │  │             │    │             │    │                         │   │  │
-│  │  │ • Voice     │    │ • Response  │    │ • Audio Synthesis       │   │  │
-│  │  │   Activity  │    │   Generation│    │ • Streaming Buffer      │   │  │
-│  │  │   Detection │    │ • Token     │    │ • Audio Splicing        │   │  │
-│  │  │ • Real-time │    │   Streaming │    │ • Smooth Playback       │   │  │
-│  │  │   Audio     │    │ • Context   │    │                         │   │  │
-│  │  │   Transcr.  │    │   Awareness │    │                         │   │  │
-│  │  └─────────────┘    └─────────────┘    └─────────────────────────┘   │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-│  ┌─────────────────┐    ┌─────────────────────────────────────────────────┐ │
-│  │ Web Dashboard   │    │        Observability & Benchmarking             │ │
-│  │                 │    │                                                 │ │
-│  │ • System Config │    │ • Automated Testing    • Metrics Collection    │ │
-│  │ • Debugging     │    │ • Performance Bench.   • Visualization         │ │
-│  │ • Monitoring    │    │ • Health Monitoring    • Alert Management      │ │
-│  └─────────────────┘    └─────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────────────┘
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│   ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐        │
+│   │   Web Browser   │◄───┤   Mobile App    │────┤  Audio Player   │        │
+│   │  (Microphone)   │    │  (Microphone)   │    │  (TTS Output)   │        │
+│   └─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘        │
+│             │                      │                      │                │
+│             └──────────────────────┼──────────────────────┘                │
+│                                    │                                       │
+│  ┌─────────────────────────────────▼─────────────────────────────────────┐ │
+│  │                    CORE BACKEND SERVICE                               │ │
+│  │                                                                       │ │
+│  │  ┌──────────────────┐  ┌─────────────────┐  ┌───────────────────────┐ │ │
+│  │  │   WebSocket      │  │ Core Interaction│  │  Configuration        │ │ │
+│  │  │  Communication   │  │     Logic       │  │   Management API      │ │ │
+│  │  │   Interface      │  │                 │  │                       │ │ │
+│  │  └─────────┬────────┘  └─────────┬───────┘  └───────────────────────┘ │ │
+│  │            │                     │                                    │ │
+│  │            │     ┌───────────────▼──────────────┐                     │ │
+│  │            │     │   BARGE-IN INTERRUPT CONTROL │                     │ │
+│  │            │     │   (User Interrupt Handling)  │                     │ │
+│  │            │     └───────────────┬──────────────┘                     │ │
+│  └────────────┼─────────────────────┼────────────────────────────────────┘ │
+│               │                     │                                      │
+│  ┌────────────▼─────────────────────▼────────────────────────────────────┐ │
+│  │                AI MODELS SERVICE PIPELINE                             │ │
+│  │                  (GPU Docker Containers)                              │ │
+│  │                                                                       │ │
+│  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────────┐    │ │
+│  │  │ STT MODULE  │ ─▶│ LLM MODULE  │───▶│      TTS MODULE         │    │ │
+│  │  │             │    │             │    │                         │    │ │
+│  │  │ • Voice     │    │ • Response  │    │ • Audio Synthesis       │    │ │
+│  │  │   Activity  │    │   Generation│    │ • Streaming Buffer      │    │ │
+│  │  │   Detection │    │ • Token     │    │ • Audio Splicing        │    │ │
+│  │  │ • Real-time │    │   Streaming │    │ • Smooth Playback       │    │ │
+│  │  │   Audio     │    │ • Context   │    │                         │    │ │
+│  │  │   Transcr.  │    │   Awareness │    │                         │    │ │
+│  │  └─────────────┘    └─────────────┘    └─────────────────────────┘    │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                            │
+│  ┌─────────────────┐    ┌─────────────────────────────────────────────────┐│
+│  │ Web Dashboard   │    │        Observability & Benchmarking             ││
+│  │                 │    │                                                 ││
+│  │ • System Config │    │ • Automated Testing    • Metrics Collection     ││
+│  │ • Debugging     │    │ • Performance Bench.   • Visualization          ││
+│  │ • Monitoring    │    │ • Health Monitoring    • Alert Management       ││
+│  └─────────────────┘    └─────────────────────────────────────────────────┘│
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Data Flow Architecture
@@ -67,14 +67,14 @@ The STT service participates in a sophisticated data flow pipeline that enables 
 
 ```
 ┌──────────────┐     Audio Stream     ┌──────────────┐     Audio Stream     ┌──────────────┐
-│ User Client  │────────────────────▶ │ Core Backend │────────────────────▶ │ STT Service  │
+│ User Client  │────────────────────▶ │ Core Backend │  ──────────────────▶│ STT Service  │
 │   (Browser)  │                      │   Service    │                      │              │
-└──────────────┘                      └──────┬───────┘                      └──────┬───────┘
-       ▲                                     │                                     │
-       │                                     │                                     │
-       │ Audio Stream                        │ Text Prompt                         │ Transcribed Text
-       │                                     ▼                                     ▼
-┌──────┴───────┐                      ┌──────────────┐     Text Prompt     ┌──────────────┐
+└──────────────┘                      └──────┬───────┘                      └──────────────┘
+       ▲                                     │                                    
+       │                                     │                                  
+       │ Audio Stream                        │ Text Prompt                         
+       │                                     ▼                                     
+┌──────┴───────┐                      ┌──────────────┐     Text Prompt      ┌──────────────┐
 │ TTS Service  │◄─────────────────────│ Core Backend │────────────────────▶│ LLM Service  │
 │              │     Text Stream      │   Service    │                      │              │
 └──────────────┘                      └──────▲───────┘                      └──────┬───────┘
@@ -84,7 +84,7 @@ The STT service participates in a sophisticated data flow pipeline that enables 
 
                                     BARGE-IN INTERRUPT FLOW:
 ┌──────────────┐  User Interrupt   ┌──────────────┐  Stop Signal   ┌─────────────────────┐
-│ User Client  │──────────────────▶│ Core Backend │───────────────▶│ All AI Services    │
+│ User Client  │──────────────────▶│ Core Backend │──────────────▶│ All AI Services     │
 │              │                   │   Service    │                │ (STT, LLM, TTS)     │
 └──────────────┘                   └──────────────┘                └─────────────────────┘
 ```
