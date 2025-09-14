@@ -1,0 +1,122 @@
+# Docker Compose for STT Service GPU deployment
+
+services:
+  stt-service-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    container_name: stt-gpu-service
+    restart: unless-stopped
+
+    # GPU configuration for high-end RTX cards
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu, compute, utility]
+
+    # Environment variables for high-end RTX optimization
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      - CUDA_MEMORY_FRACTION=0.95
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      - TORCH_CUDNN_V8_API_ENABLED=1
+      - MODEL_PATH=/app/models
+      - WHISPER_BACKEND=faster-whisper
+      - PYTHONUNBUFFERED=1
+
+    # Port mappings
+    ports:
+      - "8000:8000"  # WebSocket STT service port
+      - "9091:9091"  # Monitoring/health check port
+
+    # Volume mappings for persistence and performance
+    volumes:
+      # Model cache (persistent)
+      - stt_models:/app/models
+      # Logs (persistent)
+      - stt_logs:/app/logs
+      # Configuration (optional override)
+      - ./app/utils/config.py:/app/app/utils/config.py:ro
+      # Temporary files (Windows compatible)
+      - ./tmp:/tmp
+
+    # Audio device access (Linux only - disabled for Windows)
+    # devices:
+    #   - /dev/snd:/dev/snd
+
+    # Security and user configuration
+    user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits (adjust based on your system)
+    mem_limit: 32g
+    memswap_limit: 32g
+    shm_size: 2g
+
+    # Health check (updated for WebSocket server)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+    # Network configuration
+    networks:
+      - stt-network
+
+  # Optional: Nginx reverse proxy for production
+  stt-proxy:
+    image: nginx:alpine
+    container_name: stt-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - stt-service-gpu
+    networks:
+      - stt-network
+    profiles:
+      - production
+
+# Named volumes for persistence
+volumes:
+  stt_models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./models
+
+  stt_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./logs
+
+# Custom network
+networks:
+  stt-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

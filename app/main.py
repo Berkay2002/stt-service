@@ -3,11 +3,13 @@
 import os
 import sys
 import time
+import asyncio
 from app.utils.config import load_config, validate_config, print_config_summary, get_gpu_info, get_microphone_info
 from app.core.audio_processor import AudioProcessor
 from app.core.whisper_handler import WhisperHandler
 from app.core.microphone_capture import SimpleMicrophoneCapture
 from app.core.realtime_transcription import RealTimeTranscriber, find_microphone_by_name, list_microphones
+from app.core.websocket_launcher import WebSocketLauncher
 from app.monitoring.service_monitor import ServiceMonitor, MonitoringServer
 
 def transcribe_from_file():
@@ -185,17 +187,17 @@ def show_config():
 
     # GPU Info
     gpu_info = get_gpu_info()
-    print("\\n🖥️  GPU Information:")
+    print("\\nGPU Information:")
     if gpu_info["available"]:
-        print(f"   ✅ {gpu_info['name']}")
+        print(f"   {gpu_info['name']}")
         print(f"   Memory: {gpu_info['total_memory_gb']} GB")
         print(f"   Compute: {gpu_info['compute_capability']}")
         print(f"   CUDA: {gpu_info['cuda_version']}")
     else:
-        print(f"   ❌ {gpu_info['reason']}")
+        print(f"   GPU not available: {gpu_info['reason']}")
 
     # Microphone Info
-    print("\\n🎤 Microphone Information:")
+    print("\\nMicrophone Information:")
     mic_config = config.get("microphone", {})
     preferred_device = mic_config.get("preferred_device", "hyperx")
     preferred_device_id = find_microphone_by_name(preferred_device)
@@ -203,15 +205,15 @@ def show_config():
     if preferred_device_id is not None:
         mic_info = get_microphone_info(preferred_device_id)
         if mic_info["available"]:
-            print(f"   ✅ Found preferred: {mic_info['name']}")
+            print(f"   Found preferred: {mic_info['name']}")
             print(f"   Device ID: {mic_info['device_id']}")
         else:
-            print(f"   ❌ {mic_info['reason']}")
+            print(f"   Error: {mic_info['reason']}")
     else:
-        print(f"   ⚠️  Preferred '{preferred_device}' not found")
+        print(f"   Warning: Preferred '{preferred_device}' not found")
         default_mic = get_microphone_info()
         if default_mic["available"]:
-            print(f"   ✅ Using default: {default_mic['name']}")
+            print(f"   Using default: {default_mic['name']}")
 
     # Validate configuration
     is_valid, warnings = validate_config(config)
@@ -221,11 +223,11 @@ def show_config():
         print("CONFIGURATION WARNINGS")
         print("="*60)
         for warning in warnings:
-            print(f"⚠️  {warning}")
+            print(f"Warning: {warning}")
         print("="*60)
 
     if is_valid and not warnings:
-        print("\\n✅ Configuration is valid and optimized!")
+        print("\\nConfiguration is valid and optimized!")
 
 
 def show_help():
@@ -234,12 +236,25 @@ def show_help():
     print("WHISPER TRANSCRIPTION TOOL")
     print("="*60)
     print("Usage:")
-    print("  python main.py                    - Transcribe from audio file")
+    print("  python main.py                   - Transcribe from audio file")
     print("  python main.py --mic             - Record from microphone (duration from config)")
     print("  python main.py --realtime        - Real-time continuous transcription")
+    print("  python main.py --websocket       - Start WebSocket STT server")
     print("  python main.py --monitor         - Run monitoring server only")
     print("  python main.py --config          - Show current configuration")
     print("  python main.py --help            - Show this help message")
+    print()
+    print("WebSocket server options:")
+    print("  python main.py --websocket --port 8080           - Start WebSocket server on custom port")
+    print("  python main.py --websocket --host 127.0.0.1      - Start WebSocket server on custom host")
+    print("  python main.py --websocket --max-connections 100 - Set maximum connections")
+    print()
+    print("WebSocket endpoints (when --websocket is used):")
+    print("  WebSocket: ws://localhost:8000/ws/transcribe")
+    print("  Health check: http://localhost:8000/health")
+    print("  Statistics: http://localhost:8000/stats")
+    print("  Service info: http://localhost:8000/")
+    print("  Monitoring: http://localhost:9091/health")
     print()
     print("Real-time mode features:")
     print("  [*] Continuous microphone monitoring")
@@ -292,6 +307,93 @@ def run_monitoring_only():
     except Exception as e:
         print(f"Error running monitoring server: {e}")
 
+def run_websocket_server():
+    """Run WebSocket STT server with configuration and monitoring integration."""
+    config = load_config()
+
+    print("\\n" + "="*60)
+    print("STARTING WEBSOCKET STT SERVER")
+    print("="*60)
+
+    # Parse WebSocket-specific command line arguments
+    host = "0.0.0.0"
+    port = 8000
+    max_connections = 50
+
+    # Look for --port, --host, --max-connections arguments
+    for i, arg in enumerate(sys.argv):
+        if arg == "--port" and i + 1 < len(sys.argv):
+            try:
+                port = int(sys.argv[i + 1])
+            except ValueError:
+                print(f"Error: Invalid port number '{sys.argv[i + 1]}'")
+                return
+        elif arg == "--host" and i + 1 < len(sys.argv):
+            host = sys.argv[i + 1]
+        elif arg == "--max-connections" and i + 1 < len(sys.argv):
+            try:
+                max_connections = int(sys.argv[i + 1])
+            except ValueError:
+                print(f"Error: Invalid max connections '{sys.argv[i + 1]}'")
+                return
+
+    # Update configuration with command line values
+    if "websocket" not in config:
+        config["websocket"] = {}
+    config["websocket"]["host"] = host
+    config["websocket"]["port"] = port
+    config["websocket"]["max_connections"] = max_connections
+
+    # Display GPU Information
+    print("\\nGPU INFORMATION:")
+    gpu_info = get_gpu_info()
+    if gpu_info["available"]:
+        print(f"   Name: {gpu_info['name']}")
+        print(f"   Memory: {gpu_info['total_memory_gb']} GB total")
+        print(f"   Compute Capability: {gpu_info['compute_capability']}")
+        print(f"   CUDA Version: {gpu_info['cuda_version']}")
+        print(f"   Current Usage: {gpu_info['allocated_memory_gb']} GB allocated, {gpu_info['reserved_memory_gb']} GB reserved")
+    else:
+        print(f"   GPU not available: {gpu_info['reason']}")
+
+    # Display Model Configuration
+    print("\\nMODEL CONFIGURATION:")
+    print(f"   Model: {config.get('model_name', 'unknown')}")
+    print(f"   Compute Type: {config.get('compute_type', 'unknown')}")
+    print(f"   Beam Size: {config.get('beam_size', 'unknown')}")
+    print(f"   Batch Size: {config.get('batch_size', 'unknown')}")
+
+    # Display WebSocket Configuration
+    print("\\nWEBSOCKET CONFIGURATION:")
+    print(f"   Host: {host}")
+    print(f"   Port: {port}")
+    print(f"   Max Connections: {max_connections}")
+
+    print("\\nWebSocket STT server will start with the following endpoints:")
+    print(f"   WebSocket: ws://{host}:{port}/ws/transcribe")
+    print(f"   Health check: http://{host}:{port}/health")
+    print(f"   Statistics: http://{host}:{port}/stats")
+    print(f"   Service info: http://{host}:{port}/")
+    print(f"   Monitoring: http://localhost:9091/health")
+    print("\\nPress Ctrl+C at any time to stop the server.")
+    print("="*60)
+
+    # Wait a moment for user to read
+    print("\\nStarting server in 3 seconds...")
+    for i in range(3, 0, -1):
+        print(f"{i}...")
+        time.sleep(1)
+
+    try:
+        # Create and run WebSocket launcher with custom config
+        launcher = WebSocketLauncher(config_override=config)
+        asyncio.run(launcher.run())
+
+    except KeyboardInterrupt:
+        print("\\n\\nWebSocket STT server stopped by user")
+    except Exception as e:
+        print(f"\\nError starting WebSocket STT server: {e}")
+
 def main():
     """Main entry point with improved command line handling."""
     if len(sys.argv) > 1:
@@ -305,6 +407,8 @@ def main():
             transcribe_from_microphone()
         elif arg in ['--realtime', '-r', 'realtime', 'real-time']:
             transcribe_realtime()
+        elif arg in ['--websocket', '-w', 'websocket', 'ws']:
+            run_websocket_server()
         elif arg in ['--file', '-f', 'file']:
             transcribe_from_file()
         elif arg in ['--monitor', '-mon', 'monitor']:
