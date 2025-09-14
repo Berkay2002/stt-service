@@ -8,7 +8,7 @@ import pyaudio
 import logging
 import signal
 import sys
-from typing import Optional
+from typing import Optional, Tuple
 from app.utils.config import load_config
 from app.core.whisper_handler import WhisperHandler
 from app.core.audio_processor import AudioProcessor
@@ -20,30 +20,89 @@ except ImportError:
     WEBRTC_VAD_AVAILABLE = False
     print("Warning: webrtcvad not available. Install with 'pip install webrtcvad' for better voice activity detection.")
 
+
+def find_microphone_by_name(name_pattern: str) -> Optional[int]:
+    """
+    Find a microphone device by name pattern.
+    
+    Args:
+        name_pattern (str): Pattern to search for in microphone names (case-insensitive)
+        
+    Returns:
+        Optional[int]: Device ID if found, None otherwise
+    """
+    p = pyaudio.PyAudio()
+    try:
+        for i in range(p.get_device_count()):
+            try:
+                device_info = p.get_device_info_by_index(i)
+                if (device_info['maxInputChannels'] > 0 and 
+                    name_pattern.lower() in device_info['name'].lower()):
+                    return i
+            except Exception:
+                continue
+    finally:
+        p.terminate()
+    return None
+
+
+def list_microphones() -> list:
+    """
+    List all available microphone devices.
+    
+    Returns:
+        list: List of tuples (device_id, device_name, channels)
+    """
+    p = pyaudio.PyAudio()
+    microphones = []
+    try:
+        for i in range(p.get_device_count()):
+            try:
+                device_info = p.get_device_info_by_index(i)
+                if device_info['maxInputChannels'] > 0:
+                    microphones.append((i, device_info['name'], device_info['maxInputChannels']))
+            except Exception:
+                continue
+    finally:
+        p.terminate()
+    return microphones
+
 class RealTimeTranscriber:
     """
     Real-time speech-to-text transcription system using threading and audio buffering.
     Continuously captures audio from microphone and transcribes it using Whisper.
     """
     
-    def __init__(self, config: dict, chunk_duration: float = 1.0, buffer_duration: float = 30.0):
+    def __init__(self, config: dict, chunk_duration: float = 1.0, buffer_duration: float = 30.0, microphone_device_id: Optional[int] = None):
         """
         Initialize the real-time transcriber.
-        
+
         Args:
-            config (dict): Configuration for Whisper and audio processing
-            chunk_duration (float): Audio chunk duration in seconds for processing
-            buffer_duration (float): Maximum audio buffer duration in seconds
+            config (dict): Configuration for Whisper and audio processing (includes realtime, microphone, and VAD settings)
+            chunk_duration (float): Audio chunk duration in seconds (fallback if not in config)
+            buffer_duration (float): Maximum audio buffer duration in seconds (fallback if not in config)
+            microphone_device_id (Optional[int]): Specific microphone device ID to use (None for default)
+
+        Note:
+            Most settings are now loaded from config['realtime'], config['microphone'], and config['vad_realtime'].
+            Parameters chunk_duration and buffer_duration are only used as fallbacks if not specified in config.
         """
         self.config = config
-        self.chunk_duration = chunk_duration
-        self.buffer_duration = buffer_duration
-        
-        # Audio configuration
-        self.sample_rate = 16000  # Whisper expects 16kHz
-        self.channels = 1
+
+        # Get real-time settings from config or use provided parameters as fallback
+        rt_config = config.get("realtime", {})
+        self.chunk_duration = chunk_duration if chunk_duration != 1.0 else rt_config.get("chunk_duration", 1.0)
+        self.buffer_duration = buffer_duration if buffer_duration != 30.0 else rt_config.get("buffer_duration", 30.0)
+        self.microphone_device_id = microphone_device_id
+
+        # Audio configuration from config
+        self.sample_rate = rt_config.get("sample_rate", 16000)  # Whisper expects 16kHz
+        self.channels = rt_config.get("channels", 1)
         self.chunk_size = int(self.sample_rate * self.chunk_duration)
-        self.format = pyaudio.paFloat32
+
+        # Convert format string to pyaudio format
+        format_str = rt_config.get("format", "float32")
+        self.format = pyaudio.paFloat32 if format_str == "float32" else pyaudio.paInt16
         
         # Threading and queue setup
         self.audio_queue = queue.Queue()
@@ -56,18 +115,20 @@ class RealTimeTranscriber:
         self.whisper_handler = WhisperHandler(config)
         
         # Voice Activity Detection
-        self.use_vad = WEBRTC_VAD_AVAILABLE
+        vad_config = config.get("vad_realtime", {})
+        self.use_vad = WEBRTC_VAD_AVAILABLE and vad_config.get("enable", True)
         if self.use_vad:
-            self.vad = webrtcvad.Vad(2)  # Aggressiveness mode 2 (0-3, 3 is most aggressive)
-        
+            aggressiveness = vad_config.get("aggressiveness", 2)
+            self.vad = webrtcvad.Vad(aggressiveness)  # Aggressiveness mode from config
+
         # Audio buffer for accumulating speech
         self.audio_buffer = []
         self.buffer_lock = threading.Lock()
-        
-        # Silence detection
-        self.silence_threshold = 0.01
-        self.min_audio_length = 1.0  # Minimum audio length to transcribe (seconds)
-        self.max_silence_duration = 2.0  # Max silence before processing buffer (seconds)
+
+        # Silence detection settings from config
+        self.silence_threshold = rt_config.get("silence_threshold", 0.01)
+        self.min_audio_length = rt_config.get("min_audio_length", 1.0)
+        self.max_silence_duration = rt_config.get("max_silence_duration", 2.0)
         self.silence_start_time = None
         
         # Setup logging
@@ -112,7 +173,8 @@ class RealTimeTranscriber:
                 audio_bytes = audio_int16.tobytes()
                 
                 # WebRTC VAD requires specific frame sizes (10, 20, or 30 ms)
-                frame_duration = 30  # ms
+                vad_config = self.config.get("vad_realtime", {})
+                frame_duration = vad_config.get("frame_duration_ms", 30)  # ms from config
                 frame_size = int(self.sample_rate * frame_duration / 1000)
                 
                 if len(audio_int16) >= frame_size:
@@ -129,7 +191,7 @@ class RealTimeTranscriber:
     
     def _audio_capture_thread(self):
         """Thread function for capturing audio from microphone."""
-        self.logger.info("🎤 Starting audio capture thread...")
+        self.logger.info("Starting audio capture thread...")
         
         # Initialize PyAudio
         p = pyaudio.PyAudio()
@@ -141,6 +203,7 @@ class RealTimeTranscriber:
                 channels=self.channels,
                 rate=self.sample_rate,
                 input=True,
+                input_device_index=self.microphone_device_id,
                 frames_per_buffer=self.chunk_size
             )
             
@@ -172,7 +235,7 @@ class RealTimeTranscriber:
     
     def _audio_processing_thread(self):
         """Thread function for processing audio and managing speech buffer."""
-        self.logger.info("🔄 Starting audio processing thread...")
+        self.logger.info("Starting audio processing thread...")
         
         while self.is_running:
             try:
@@ -251,7 +314,7 @@ class RealTimeTranscriber:
     
     def _transcription_thread(self):
         """Thread function for transcribing audio using Whisper."""
-        self.logger.info("🎯 Starting transcription thread...")
+        self.logger.info("Starting transcription thread...")
         
         while self.is_running:
             try:
@@ -307,12 +370,12 @@ class RealTimeTranscriber:
             thread.daemon = True
             thread.start()
         
-        self.logger.info("🚀 Real-time transcription started!")
-        print("\\n" + "="*60)
-        print("🎤 REAL-TIME TRANSCRIPTION ACTIVE")
+        self.logger.info("Real-time transcription started!")
+        print("\\n" + "="*80)
+        print("🚀 REAL-TIME TRANSCRIPTION ACTIVE")
         print("Speak into your microphone - transcriptions will appear below")
         print("Press Ctrl+C to stop")
-        print("="*60 + "\\n")
+        print("="*80 + "\\n")
     
     def stop(self):
         """Stop the real-time transcription system."""
@@ -328,9 +391,9 @@ class RealTimeTranscriber:
             if thread.is_alive():
                 self.logger.warning(f"Thread {thread.name} did not stop gracefully")
         
-        print("\\n" + "="*60)
+        print("\\n" + "="*80)
         print("🛑 REAL-TIME TRANSCRIPTION STOPPED")
-        print("="*60)
+        print("="*80)
     
     def run(self):
         """Run the real-time transcription system until interrupted."""
@@ -350,11 +413,9 @@ def main():
     """Main function to run real-time transcription."""
     config = load_config()
     
-    # Create and run real-time transcriber
+    # Create and run real-time transcriber - settings now come from config
     transcriber = RealTimeTranscriber(
-        config=config,
-        chunk_duration=0.5,      # Process audio in 0.5 second chunks
-        buffer_duration=30.0     # Maximum 30 seconds of audio in buffer
+        config=config
     )
     
     transcriber.run()

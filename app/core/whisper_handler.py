@@ -50,31 +50,39 @@ class WhisperHandler:
         try:
             device = self.config.get("device", "cpu")
             model_name = self.config.get("model_name", "base.en")
-            
+
             # Determine compute type based on device and config
             if device == "cuda":
-                compute_type = "float16" if self.config.get("fp16", False) else "float32"
+                compute_type = self.config.get("compute_type", "float16" if self.config.get("fp16", False) else "float32")
                 cuda_device_index = self.config.get("cuda_device_index", 0)
-                
+                cpu_threads = self.config.get("cpu_threads", 8)
+                num_workers = self.config.get("num_workers", 4)
+
                 self.logger.info(f"Loading Whisper model '{model_name}' on GPU {cuda_device_index} with {compute_type}")
+                self.logger.info(f"Using {cpu_threads} CPU threads and {num_workers} workers for high-end RTX optimization")
+
                 self.model = WhisperModel(
                     model_name,
                     device=device,
                     device_index=cuda_device_index,
-                    compute_type=compute_type
+                    compute_type=compute_type,
+                    cpu_threads=cpu_threads,
+                    num_workers=num_workers
                 )
             else:
                 compute_type = "int8" if not self.config.get("fp16", False) else "float32"
-                
+                cpu_threads = self.config.get("cpu_threads", 4)
+
                 self.logger.info(f"Loading Whisper model '{model_name}' on CPU with {compute_type}")
                 self.model = WhisperModel(
                     model_name,
                     device=device,
-                    compute_type=compute_type
+                    compute_type=compute_type,
+                    cpu_threads=cpu_threads
                 )
-            
+
             self.logger.info("Whisper model loaded successfully")
-            
+
         except Exception as e:
             self.logger.error(f"Failed to load Whisper model: {str(e)}")
             raise
@@ -93,16 +101,29 @@ class WhisperHandler:
             raise RuntimeError("Whisper model not loaded")
         
         try:
+            # Get transcription parameters from config
             beam_size = self.config.get("beam_size", 5)
-            
-            self.logger.info(f"Starting transcription with beam_size={beam_size}")
-            
-            # Transcribe audio
+            temperature = self.config.get("temperature", 0.0)
+            condition_on_previous_text = self.config.get("condition_on_previous_text", True)
+            compression_ratio_threshold = self.config.get("compression_ratio_threshold", 2.4)
+            log_prob_threshold = self.config.get("log_prob_threshold", -1.0)
+            no_speech_threshold = self.config.get("no_speech_threshold", 0.6)
+            vad_filter = self.config.get("vad_filter", True)
+            vad_parameters = self.config.get("vad_parameters", {})
+
+            self.logger.info(f"Starting high-performance transcription with beam_size={beam_size}, temperature={temperature}")
+
+            # Transcribe audio with optimized parameters for high-end GPUs
             segments, info = self.model.transcribe(
                 audio_data,
                 beam_size=beam_size,
-                vad_filter=True,  # Enable voice activity detection
-                vad_parameters=dict(min_silence_duration_ms=500)
+                temperature=temperature,
+                condition_on_previous_text=condition_on_previous_text,
+                compression_ratio_threshold=compression_ratio_threshold,
+                log_prob_threshold=log_prob_threshold,
+                no_speech_threshold=no_speech_threshold,
+                vad_filter=vad_filter,
+                vad_parameters=vad_parameters
             )
             
             # Log detected language
@@ -141,13 +162,27 @@ class WhisperHandler:
             raise RuntimeError("Whisper model not loaded")
         
         try:
+            # Get transcription parameters from config
             beam_size = self.config.get("beam_size", 5)
-            
+            temperature = self.config.get("temperature", 0.0)
+            condition_on_previous_text = self.config.get("condition_on_previous_text", True)
+            compression_ratio_threshold = self.config.get("compression_ratio_threshold", 2.4)
+            log_prob_threshold = self.config.get("log_prob_threshold", -1.0)
+            no_speech_threshold = self.config.get("no_speech_threshold", 0.6)
+            vad_filter = self.config.get("vad_filter", True)
+            vad_parameters = self.config.get("vad_parameters", {})
+
             segments, info = self.model.transcribe(
                 audio_data,
                 beam_size=beam_size,
+                temperature=temperature,
+                condition_on_previous_text=condition_on_previous_text,
+                compression_ratio_threshold=compression_ratio_threshold,
+                log_prob_threshold=log_prob_threshold,
+                no_speech_threshold=no_speech_threshold,
                 word_timestamps=True,  # Enable word-level timestamps
-                vad_filter=True
+                vad_filter=vad_filter,
+                vad_parameters=vad_parameters
             )
             
             results = []
