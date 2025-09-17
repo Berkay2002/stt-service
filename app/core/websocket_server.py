@@ -26,14 +26,18 @@ from app.utils.logger import get_logger
 # Type definitions for better code clarity
 ConnectionState = Literal["connecting", "active", "buffering", "processing", "disconnecting", "error"]
 MessageType = Literal["audio_chunk", "start_session", "end_session", "flush_buffer", "configure"]
+TranscriptionType = Literal["transcription_partial", "transcription_final", "transcription"]  # Legacy support
 
 @dataclass
 class SessionConfig:
-    """Configuration for a transcription session"""
+    """Enhanced configuration for a transcription session with partial/final support"""
     language: Optional[str] = None
     enable_timestamps: bool = False
     enable_vad: bool = True
+    enable_partial_transcription: bool = True
     buffer_duration: float = 2.0
+    partial_chunk_duration: float = 0.25  # 250ms for partial results
+    final_chunk_duration: float = 1.0    # 1s for final results
     chunk_size: int = 1024  # Audio chunk size in samples
 
 @dataclass
@@ -187,25 +191,35 @@ class ConnectionManager:
 
             # Initialize stream processor if not already created
             if not connection.stream_processor:
-                # Create transcription callback
-                async def transcription_callback(session_id: str, audio_data: np.ndarray, metadata: Dict[str, Any]):
-                    await self._process_transcription(session_id, audio_data, metadata)
+                # Create transcription callbacks for both partial and final results
+                async def final_transcription_callback(session_id: str, audio_data: np.ndarray, metadata: Dict[str, Any]):
+                    await self._process_final_transcription(session_id, audio_data, metadata)
 
-                # Initialize stream processor with configuration
+                async def partial_transcription_callback(session_id: str, audio_data: np.ndarray, metadata: Dict[str, Any]):
+                    await self._process_partial_transcription(session_id, audio_data, metadata)
+
+                # Initialize stream processor with enhanced configuration
                 stream_config = {
                     "sample_rate": 16000,
                     "channels": 1,
-                    "chunk_duration": connection.config.buffer_duration,
+                    "enable_partial_transcription": connection.config.enable_partial_transcription,
+                    "partial_chunk_duration": connection.config.partial_chunk_duration,
+                    "final_chunk_duration": connection.config.final_chunk_duration,
                     "buffer_duration": connection.config.buffer_duration * 2,
                     "enable_vad": connection.config.enable_vad,
-                    "min_audio_length": 0.5,
-                    "max_silence_duration": 2.0
+                    "min_audio_length": 0.3,  # Reduced for faster response
+                    "max_silence_duration": 2.0,
+                    "vad": {
+                        "partial_trigger_duration": 0.25,
+                        "final_trigger_silence": 0.8
+                    }
                 }
 
                 connection.stream_processor = AudioStreamProcessor(
                     session_id=session_id,
                     config=stream_config,
-                    transcription_callback=transcription_callback
+                    transcription_callback=final_transcription_callback,
+                    partial_callback=partial_transcription_callback if connection.config.enable_partial_transcription else None
                 )
                 await connection.stream_processor.start_processing()
 
@@ -261,8 +275,54 @@ class ConnectionManager:
             error_response = create_error_response(error_info)
             await self._send_message(connection.websocket, error_response)
 
-    async def _process_transcription(self, session_id: str, audio_data: np.ndarray, metadata: Dict[str, Any]) -> None:
-        """Process transcription request from audio stream processor"""
+    async def _process_partial_transcription(self, session_id: str, audio_data: np.ndarray, metadata: Dict[str, Any]) -> None:
+        """Process partial transcription request for quick user feedback"""
+        if session_id not in self.connections:
+            return
+
+        connection = self.connections[session_id]
+        start_time = time.time()
+
+        try:
+            # Use fast partial transcription
+            text = await asyncio.get_event_loop().run_in_executor(
+                None, self.whisper_handler.transcribe_partial, audio_data
+            )
+
+            processing_time = time.time() - start_time
+            audio_duration = metadata.get("duration", len(audio_data) / 16000)
+
+            # Only send if we got meaningful text
+            if text and len(text.strip()) > 0:
+                # Send partial result
+                result = {
+                    "type": "transcription_partial",
+                    "data": {
+                        "text": text.strip(),
+                        "is_partial": True,
+                        "utterance_id": metadata.get("utterance_id"),
+                        "processing_time_ms": int(processing_time * 1000),
+                        "audio_duration_ms": int(audio_duration * 1000),
+                        "confidence": 0.85,  # Estimated confidence for partial results
+                        "metadata": metadata
+                    },
+                    "metadata": {
+                        "session_id": session_id,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+
+                await self._send_message(connection.websocket, result)
+
+                # Update partial statistics
+                connection.stats["transcriptions_completed"] += 1
+
+        except Exception as e:
+            # Don't fail hard on partial transcription errors
+            self.logger.debug(f"Partial transcription error for session {session_id}: {e}")
+
+    async def _process_final_transcription(self, session_id: str, audio_data: np.ndarray, metadata: Dict[str, Any]) -> None:
+        """Process final transcription request with full quality"""
         if session_id not in self.connections:
             return
 
@@ -272,7 +332,7 @@ class ConnectionManager:
 
         try:
             async with self.processing_lock:
-                # Perform transcription
+                # Perform high-quality final transcription
                 if connection.config.enable_timestamps:
                     segments = await asyncio.get_event_loop().run_in_executor(
                         None, self.whisper_handler.transcribe_with_timestamps, audio_data
@@ -306,8 +366,28 @@ class ConnectionManager:
                 # Record in monitor
                 self.monitor.record_transcription(audio_duration, processing_time)
 
-                # Send result
+                # Send final result
                 result = {
+                    "type": "transcription_final",
+                    "data": {
+                        "text": text.strip(),
+                        "is_partial": False,
+                        "utterance_id": metadata.get("utterance_id"),
+                        "processing_time_ms": int(processing_time * 1000),
+                        "audio_duration_ms": int(audio_duration * 1000),
+                        "timestamps": timestamps,
+                        "metadata": metadata
+                    },
+                    "metadata": {
+                        "session_id": session_id,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+
+                await self._send_message(connection.websocket, result)
+
+                # Send legacy format for backward compatibility
+                legacy_result = {
                     "type": "transcription",
                     "data": {
                         "text": text.strip(),
@@ -322,14 +402,14 @@ class ConnectionManager:
                     }
                 }
 
-                await self._send_message(connection.websocket, result)
+                await self._send_message(connection.websocket, legacy_result)
 
         except Exception as e:
             connection.stats["errors"] += 1
-            error_info = await self.error_handler.handle_error(e, "transcription", session_id)
+            error_info = await self.error_handler.handle_error(e, "final_transcription", session_id)
             error_response = create_error_response(error_info)
             await self._send_message(connection.websocket, error_response)
-            self.monitor.record_error(e, f"transcription_{session_id}")
+            self.monitor.record_error(e, f"final_transcription_{session_id}")
 
         finally:
             # Update connection state

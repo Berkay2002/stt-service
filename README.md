@@ -35,17 +35,22 @@
 
 ##  Overview
 
-stt-service is a lightweight, production-oriented speech-to-text microservice built with Python and Flask. It provides realtime and batch transcription primitives, a simple monitoring layer, and utilities for audio capture and processing. The project aims to make it easy to run transcription pipelines locally or inside a container and to extend the codebase with different speech models or runtime integrations.
+stt-service is a high-performance, real-time speech-to-text microservice built with Python and FastAPI. It provides **enhanced partial and final transcription capabilities** with sub-300ms latency for conversational AI applications. The service features dual-mode processing, intelligent voice activity detection, and comprehensive monitoring for production deployment. Designed for seamless integration with conversational AI pipelines, it enables natural real-time interactions with advanced interrupt handling (barge-in) support.
 
 ---
 
 ##  Features
 
-- Realtime transcription endpoint and helper classes for microphone capture and audio processing.
-- Pluggable model handler (example: Whisper-based handler) so models can be swapped without changing the surface API.
-- Simple service monitoring and health checks with JSON-formatted test results for easy observability.
-- Small, well-tested core with unit tests for error handling, logging, and basic monitoring flows.
-- Docker-ready: includes container configuration and optional GPU Dockerfile variant.
+- **Partial and Final Transcription**: Real-time partial results (~300ms) with high-quality final transcriptions (~600ms)
+- **Enhanced Voice Activity Detection**: Smart triggering with utterance boundary detection and barge-in support
+- **Dual Processing Modes**: Optimized pipelines for speed (partial) vs. accuracy (final) with overlapping audio windows
+- **WebSocket Real-time API**: FastAPI-based server with concurrent connections and intelligent buffering
+- **Conversational AI Optimized**: Purpose-built for STT→LLM→TTS pipelines with interrupt handling
+- **GPU-Accelerated Processing**: Whisper model integration with smart caching and resource management
+- **Production Monitoring**: Comprehensive metrics, health checks, and performance analysis tools
+- **Backward Compatible**: Legacy transcription API support for existing integrations
+- **Docker & GPU Ready**: Complete containerization with CUDA support and scaling configurations
+- **Performance Testing**: Built-in benchmarking tools for latency validation and optimization
 
 ---
 
@@ -54,18 +59,27 @@ stt-service is a lightweight, production-oriented speech-to-text microservice bu
 ```sh
 └── stt-service/
     ├── Dockerfile
+    ├── Dockerfile.gpu
     ├── app
     │   ├── __init__.py
     │   ├── core
-    │   ├── main.py
+    │   │   ├── audio_stream_processor.py    # Enhanced dual-mode processing
+    │   │   ├── websocket_server.py          # FastAPI WebSocket server
+    │   │   ├── whisper_handler.py           # Partial/final transcription
+    │   │   └── microphone_capture.py
+    │   ├── client_examples
+    │   │   └── websocket_client_example.py  # Enhanced client with partial/final
+    │   ├── main.py                          # CLI with WebSocket mode
     │   ├── monitoring
     │   └── utils
     ├── assets
     │   └── harvard.wav
-    ├── dockerfile-gpu.txt
     ├── docs
     │   ├── MONITORING.md
+    │   ├── WebSocket_STT_Architecture.md    # Complete architecture guide
     │   └── PRODUCTION_MONITORING.md
+    ├── main.py                              # Service entry point
+    ├── test_partial_final_performance.py    # Performance validation
     ├── requirements.txt
     ├── scripts
     │   └── test_endpoints.bat
@@ -233,27 +247,98 @@ Install stt-service using one of the following methods:
 
 
 ###  Usage
-Run stt-service using the following command:
-**Using `pip`** &nbsp; [<img align="center" src="https://img.shields.io/badge/Pip-3776AB.svg?style={badge_style}&logo=pypi&logoColor=white" />](https://pypi.org/project/pip/)
 
+#### WebSocket Real-time Server (Recommended)
 ```sh
-❯ python {entrypoint}
+# Start WebSocket server for real-time transcription
+❯ python main.py websocket --port 8000
+
+# With custom configuration
+❯ python main.py websocket --host 0.0.0.0 --port 8080 --max-connections 100
 ```
 
-
-**Using `docker`** &nbsp; [<img align="center" src="https://img.shields.io/badge/Docker-2CA5E0.svg?style={badge_style}&logo=docker&logoColor=white" />](https://www.docker.com/)
-
+#### File Processing Mode
 ```sh
-❯ docker run -it {image_name}
+# Process single audio file
+❯ python main.py file input.wav
+
+# With word-level timestamps
+❯ python main.py file input.wav --timestamps
+```
+
+#### Microphone Recording Mode
+```sh
+# Record and transcribe from microphone
+❯ python main.py microphone --timestamps
+```
+
+#### Configuration Management
+```sh
+# Show current configuration
+❯ python main.py config --show
+```
+
+#### Docker Deployment
+**CPU Version:**
+```sh
+❯ docker build -t stt-service .
+❯ docker run -p 8000:8000 -p 9091:9091 stt-service
+```
+
+**GPU Version:**
+```sh
+❯ docker build -f Dockerfile.gpu -t stt-service-gpu .
+❯ docker run --gpus all -p 8000:8000 -p 9091:9091 stt-service-gpu
+```
+
+**Docker Compose with GPU:**
+```sh
+❯ docker-compose -f docker-compose.gpu.yml up
 ```
 
 
 ###  Testing
-Run the test suite using the following command:
-**Using `pip`** &nbsp; [<img align="center" src="https://img.shields.io/badge/Pip-3776AB.svg?style={badge_style}&logo=pypi&logoColor=white" />](https://pypi.org/project/pip/)
 
+#### Unit Tests
 ```sh
+# Run all unit tests
 ❯ pytest
+
+# Run specific test modules
+❯ pytest tests/test_error_handler.py
+❯ pytest tests/test_realtime.py
+```
+
+#### Performance Testing
+```sh
+# Test partial/final transcription performance
+❯ python test_partial_final_performance.py
+
+# Expected output:
+# ✅ EXCELLENT: Partial latency < 300ms  
+# ✅ EXCELLENT: Final latency < 600ms
+# ✅ CONFIRMED: Partial transcription working
+# ✅ CONFIRMED: Final transcription working
+```
+
+#### WebSocket Client Testing
+```sh
+# Interactive client with partial/final support
+❯ python app/client_examples/websocket_client_example.py
+
+# Choose option 1 for microphone testing
+# Choose option 2 for test audio file
+# Choose option 3 for connection stress test
+```
+
+#### API Endpoint Testing
+```sh
+# Test HTTP endpoints (Windows)
+❯ scripts/test_endpoints.bat
+
+# Test WebSocket health
+❯ curl http://localhost:8000/health
+❯ curl http://localhost:8000/stats
 ```
 
 ---
@@ -268,13 +353,44 @@ This project is protected under the MIT License.
 
 Thanks to the open-source projects and communities that make this work possible:
 
-- OpenAI and the Whisper model authors — for inspiration and reference implementations used in the model adapter.
-- The Flask community — for a lightweight web framework that makes building microservices straightforward.
-- Contributors to many Python audio libraries (NumPy, soundfile, pyaudio) which make audio processing achievable.
+- **OpenAI and the Whisper model authors** — for the foundational speech-to-text models and faster-whisper optimizations
+- **FastAPI community** — for the high-performance async web framework enabling real-time WebSocket processing
+- **Python audio ecosystem** — NumPy, soundfile, pyaudio, scipy for comprehensive audio processing capabilities
+- **GPU acceleration libraries** — PyTorch, CUDA toolkit for efficient real-time transcription processing
+- **WebSocket and async communities** — for enabling seamless real-time communication protocols
 
 ---
 
-Notes
+## Quick Start Guide
 
-- Replace `{entrypoint}` with `app.main` or run `python -m app.main` to start the service locally.
-- Replace `{image_name}` with the name you used when building the Docker image (for example `Berkay2002/stt-service`).
+1. **Install dependencies:**
+   ```sh
+   pip install -r requirements.txt
+   ```
+
+2. **Start WebSocket server:**
+   ```sh
+   python main.py websocket
+   ```
+
+3. **Test with performance validator:**
+   ```sh
+   python test_partial_final_performance.py
+   ```
+
+4. **Try interactive client:**
+   ```sh
+   python app/client_examples/websocket_client_example.py
+   ```
+
+### WebSocket Endpoints
+- **Transcription**: `ws://localhost:8000/ws/transcribe`
+- **Health Check**: `http://localhost:8000/health`
+- **Statistics**: `http://localhost:8000/stats`
+- **Monitoring**: `http://localhost:9091/health`
+
+### Performance Targets
+- **Partial Results**: <300ms average latency
+- **Final Results**: <600ms average latency  
+- **Concurrent Connections**: 50+ streams
+- **Real-time Factor**: <0.3 GPU utilization

@@ -121,15 +121,26 @@ class STTWebSocketClient:
             config = message.get("config", {})
             print(f"Session configured: {config}")
 
-        elif msg_type == "transcription":
+        elif msg_type == "transcription_partial":
+            data = message.get("data", {})
+            text = data.get("text", "")
+            processing_time = data.get("processing_time_ms", 0)
+            utterance_id = data.get("utterance_id", "")
+            confidence = data.get("confidence", 0.0)
+
+            print(f"[PARTIAL] '{text}' (confidence: {confidence:.2f}, {processing_time}ms, utterance: {utterance_id[:8]}...)")
+
+        elif msg_type == "transcription_final":
             data = message.get("data", {})
             text = data.get("text", "")
             processing_time = data.get("processing_time_ms", 0)
             audio_duration = data.get("audio_duration_ms", 0)
+            utterance_id = data.get("utterance_id", "")
 
-            print(f"Transcription: '{text}'")
+            print(f"[FINAL] '{text}'")
             print(f"  Processing time: {processing_time}ms")
             print(f"  Audio duration: {audio_duration}ms")
+            print(f"  Utterance ID: {utterance_id}")
 
             # Print timestamps if available
             timestamps = data.get("timestamps")
@@ -140,6 +151,15 @@ class STTWebSocketClient:
                     start = word_info.get("start_ms", 0)
                     end = word_info.get("end_ms", 0)
                     print(f"    {word}: {start}-{end}ms")
+
+        elif msg_type == "transcription":
+            # Legacy support
+            data = message.get("data", {})
+            text = data.get("text", "")
+            processing_time = data.get("processing_time_ms", 0)
+            audio_duration = data.get("audio_duration_ms", 0)
+
+            print(f"[LEGACY] '{text}' ({processing_time}ms)")
 
         elif msg_type == "session_ended":
             stats = message.get("stats", {})
@@ -174,7 +194,10 @@ async def record_and_transcribe_microphone():
         await client.start_session({
             "enable_timestamps": True,
             "enable_vad": True,
-            "buffer_duration": 1.5
+            "enable_partial_transcription": True,
+            "buffer_duration": 2.0,
+            "partial_chunk_duration": 0.25,
+            "final_chunk_duration": 1.0
         })
 
         # Initialize PyAudio
